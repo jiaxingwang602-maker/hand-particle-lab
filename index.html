@@ -1,0 +1,922 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#07090d" />
+    <meta name="description" content="基于 MediaPipe Hands 与 Three.js 的实时 GPU 手势粒子实验室" />
+    <title>掌心引力场 · Hand Particle Lab</title>
+    <style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+
+:root {
+  color-scheme: dark;
+  font-family: 'Noto Sans SC', system-ui, sans-serif;
+  background: #07090d;
+  color: #f4f7f5;
+  --acid: #c8ff32;
+  --cyan: #5ce1e6;
+  --panel: rgba(12, 15, 20, 0.78);
+  --line: rgba(255, 255, 255, 0.14);
+  --muted: #99a09f;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+button, input { font: inherit; }
+button { color: inherit; }
+
+.app-shell {
+  position: relative;
+  isolation: isolate;
+  min-height: 100dvh;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(42, 52, 49, 0.18), transparent 36%),
+    #07090d;
+}
+
+.app-shell::before {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  content: '';
+  opacity: 0.12;
+  background-image: linear-gradient(rgba(255,255,255,.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.1) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(circle at center, black, transparent 78%);
+}
+
+.scene { position: absolute; inset: 0; z-index: 0; cursor: crosshair; }
+.scene canvas { display: block; width: 100%; height: 100%; }
+.camera-feed { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+.topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 82px;
+  padding: max(20px, env(safe-area-inset-top)) 32px 18px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(to bottom, rgba(7,9,13,.8), transparent);
+}
+
+.brand { display: flex; align-items: center; gap: 12px; color: inherit; text-decoration: none; }
+.brand-mark { width: 21px; height: 21px; border: 2px solid var(--acid); transform: rotate(45deg); box-shadow: inset 0 0 0 4px #07090d, inset 0 0 0 7px var(--acid); }
+.brand strong { display: block; font-size: 16px; letter-spacing: 0; }
+.brand small, .eyebrow, .panel-heading span, .bottom-meta, .system-state, .particle-count {
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0;
+}
+.brand small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; }
+
+.system-state { display: flex; align-items: center; gap: 9px; font-size: 11px; color: #d2d7d4; }
+.state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--acid); box-shadow: 0 0 12px var(--acid); }
+.state-dot.camera { background: #ff6b57; box-shadow: 0 0 12px #ff6b57; }
+.particle-count { margin-left: 8px; padding-left: 16px; border-left: 1px solid var(--line); color: var(--muted); }
+
+.hero-copy {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  left: 5.5vw;
+  width: min(390px, 34vw);
+  transform: translateY(-55%);
+  pointer-events: none;
+}
+.eyebrow { margin: 0 0 14px; color: var(--acid); font-size: 10px; font-weight: 500; }
+.hero-copy h1 { margin: 0; font-size: clamp(42px, 5.1vw, 78px); line-height: 1.03; letter-spacing: 0; font-weight: 600; }
+.hero-copy > p:last-child { max-width: 310px; margin: 22px 0 0; color: var(--muted); font-size: 13px; line-height: 1.8; }
+
+.control-panel {
+  position: absolute;
+  z-index: 5;
+  top: 50%;
+  right: 32px;
+  width: 310px;
+  padding: 20px;
+  transform: translateY(-45%);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 24px 70px rgba(0,0,0,.32);
+  backdrop-filter: blur(18px);
+}
+
+.panel-heading { display: flex; justify-content: space-between; align-items: center; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+.panel-heading span { display: block; color: var(--muted); font-size: 9px; }
+.panel-heading strong { display: block; margin-top: 4px; font-size: 18px; }
+.camera-button { display: flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 10px; border: 1px solid var(--acid); border-radius: 4px; background: transparent; color: var(--acid); cursor: pointer; transition: .2s ease; }
+.camera-button:hover { background: var(--acid); color: #10130b; }
+.camera-button:disabled { cursor: wait; opacity: .6; }
+.camera-button svg { width: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.camera-button span { color: inherit; font-family: inherit; font-size: 11px; }
+
+.mode-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin: 16px 0; }
+.mode-button { display: grid; place-items: center; gap: 5px; height: 64px; border: 1px solid var(--line); border-radius: 4px; background: rgba(255,255,255,.025); color: var(--muted); font-size: 10px; cursor: pointer; transition: .18s ease; }
+.mode-button:hover { border-color: rgba(255,255,255,.34); color: #fff; }
+.mode-button.active { border-color: var(--acid); background: rgba(200,255,50,.08); color: var(--acid); }
+.mode-icon { height: 21px; color: currentColor; font-size: 21px; line-height: 1; }
+
+.sliders { display: grid; gap: 14px; padding: 15px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.sliders label > span { display: flex; justify-content: space-between; margin-bottom: 8px; color: #bdc4c1; font-size: 10px; }
+.sliders output { color: var(--acid); font-family: 'IBM Plex Mono', monospace; }
+input[type='range'] { width: 100%; height: 3px; margin: 0; appearance: none; background: linear-gradient(90deg, var(--acid) 50%, #363c3a 50%); outline: none; }
+input[type='range']::-webkit-slider-thumb { width: 12px; height: 12px; appearance: none; border: 2px solid #10130b; border-radius: 50%; background: var(--acid); box-shadow: 0 0 0 1px var(--acid); cursor: ew-resize; }
+
+.gesture-key { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 10px; margin-top: 15px; color: #777f7c; font-size: 8px; }
+.gesture-key span { display: flex; align-items: center; gap: 5px; }
+.gesture-key i { width: 6px; height: 6px; border-radius: 50%; background: var(--acid); }
+.gesture-key .open { background: var(--cyan); }
+.gesture-key .fist { background: #ff6b57; }
+.gesture-key .heart { background: #ff4f8b; }
+.gesture-key .explode { background: #ffb03a; }
+.gesture-key .trail { background: #5ce1e6; }
+
+.bottom-meta { position: absolute; z-index: 4; bottom: 25px; left: 32px; display: flex; gap: 20px; color: #69716e; font-size: 9px; }
+.bottom-meta span:first-child { color: var(--acid); }
+
+.toast { position: absolute; z-index: 8; left: 50%; bottom: 32px; max-width: min(90vw, 420px); padding: 10px 14px; border: 1px solid var(--line); border-radius: 4px; background: rgba(11,14,18,.94); color: #dfe4e1; font-size: 12px; transform: translate(-50%, 20px); opacity: 0; pointer-events: none; transition: .25s ease; }
+.toast.visible { transform: translate(-50%, 0); opacity: 1; }
+
+.loading-screen { position: absolute; inset: 0; z-index: 20; display: grid; place-content: center; justify-items: center; gap: 10px; background: #07090d; transition: opacity .6s ease, visibility .6s ease; }
+.loading-screen.hidden { opacity: 0; visibility: hidden; }
+.loading-screen strong { margin-top: 8px; font-size: 13px; }
+.loading-screen span { color: var(--muted); font: 9px 'IBM Plex Mono', monospace; }
+.loader-ring { width: 42px; height: 42px; border: 1px solid #303632; border-top-color: var(--acid); border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 880px) {
+  .topbar { min-height: 68px; padding: 16px 18px; }
+  .particle-count { display: none; }
+  .hero-copy { top: 90px; left: 20px; width: calc(100% - 40px); transform: none; }
+  .hero-copy h1 { font-size: 42px; }
+  .hero-copy > p:last-child { display: none; }
+  .control-panel { top: auto; right: 12px; bottom: max(14px, env(safe-area-inset-bottom)); left: 12px; width: auto; padding: 13px; transform: none; }
+  .panel-heading { padding-bottom: 10px; }
+  .panel-heading strong { font-size: 15px; }
+  .mode-grid { grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 10px 0; }
+  .mode-button { height: 49px; font-size: 8px; }
+  .mode-icon { height: 17px; font-size: 17px; }
+  .sliders { grid-template-columns: 1fr 1fr; gap: 14px; padding: 10px 0; }
+  .gesture-key, .bottom-meta { display: none; }
+  .camera-button { min-height: 31px; }
+}
+
+@media (max-height: 670px) and (max-width: 880px) {
+  .hero-copy .eyebrow { display: none; }
+  .hero-copy h1 { font-size: 32px; }
+  .mode-grid { margin: 7px 0; }
+  .sliders { padding: 7px 0 2px; border-bottom: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
+
+    </style>
+  </head>
+  <body>
+    <main id="app" class="app-shell">
+      <div id="scene" class="scene" aria-label="实时手势粒子画布"></div>
+      <video id="camera" class="camera-feed" playsinline muted aria-hidden="true"></video>
+
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="掌心引力场首页">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>
+            <strong>掌心引力场</strong>
+            <small>HAND PARTICLE LAB</small>
+          </span>
+        </a>
+        <div class="system-state" aria-live="polite">
+          <span id="stateDot" class="state-dot"></span>
+          <span id="stateText">鼠标模拟中</span>
+          <span class="particle-count">102,400 粒子</span>
+        </div>
+      </header>
+
+      <section class="hero-copy" aria-labelledby="mainTitle">
+        <p class="eyebrow">REAL-TIME GPU PARTICLES</p>
+        <h1 id="mainTitle">用手势<br />塑造光场</h1>
+        <p>移动指针感受引力。开启摄像头后，系统将自动读取你的手势。</p>
+      </section>
+
+      <aside class="control-panel" aria-label="粒子控制台">
+        <div class="panel-heading">
+          <div>
+            <span>FIELD MODE</span>
+            <strong id="modeName">吸引</strong>
+          </div>
+          <button id="cameraButton" class="camera-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 8h2.2l1.4 2H21v9H3v-9h2.4l1.4-2H9m3 3.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>
+            <span>开启摄像头</span>
+          </button>
+        </div>
+
+        <div id="modeGrid" class="mode-grid" role="radiogroup" aria-label="粒子效果">
+          <button class="mode-button active" data-mode="attract" role="radio" aria-checked="true" type="button"><span class="mode-icon">＋</span><span>吸引</span></button>
+          <button class="mode-button" data-mode="repel" role="radio" aria-checked="false" type="button"><span class="mode-icon">−</span><span>排斥</span></button>
+          <button class="mode-button" data-mode="vortex" role="radio" aria-checked="false" type="button"><span class="mode-icon">↻</span><span>旋转</span></button>
+          <button class="mode-button" data-mode="trail" role="radio" aria-checked="false" type="button"><span class="mode-icon">〰</span><span>拖尾</span></button>
+          <button class="mode-button" data-mode="explode" role="radio" aria-checked="false" type="button"><span class="mode-icon">✦</span><span>爆炸</span></button>
+          <button class="mode-button" data-mode="orb" role="radio" aria-checked="false" type="button"><span class="mode-icon">●</span><span>能量球</span></button>
+          <button class="mode-button" data-mode="heart" role="radio" aria-checked="false" type="button"><span class="mode-icon">♥</span><span>爱心</span></button>
+        </div>
+
+        <div class="sliders">
+          <label>
+            <span>作用强度 <output id="forceValue">1.70</output></span>
+            <input id="forceSlider" type="range" min="0.35" max="2.8" value="1.7" step="0.05" />
+          </label>
+          <label>
+            <span>粒子尺寸 <output id="sizeValue">1.00</output></span>
+            <input id="sizeSlider" type="range" min="0.5" max="2" value="1" step="0.05" />
+          </label>
+        </div>
+
+        <div class="gesture-key">
+          <span><i class="pinch"></i>捏合 / 吸引</span>
+          <span><i class="open"></i>张手 / 排斥</span>
+          <span><i class="fist"></i>握拳 / 能量球</span>
+          <span><i class="heart"></i>比心 / 爱心</span>
+          <span><i class="explode"></i>拇指+无名指 / 爆炸</span>
+          <span><i class="trail"></i>拇指+中指 / 拖尾</span>
+        </div>
+      </aside>
+
+      <div class="bottom-meta">
+        <span id="fpsText">60 FPS</span>
+        <span>WEBGL2</span>
+        <span>MEDIAPIPE</span>
+      </div>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+      <div id="loading" class="loading-screen">
+        <div class="loader-ring"></div>
+        <strong>正在生成粒子场</strong>
+        <span>初始化 GPU 纹理</span>
+      </div>
+    </main>
+    <!-- 原生导入映射让项目在未安装 npm 依赖时也能直接由静态服务器运行。 -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+          "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/+esm"
+        }
+      }
+    </script>
+    <script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
+
+// 单文件部署版直接内嵌 GLSL，避免移动网络下的额外请求。
+const simulationVertexShader = String.raw`// 全屏三角形顶点着色器：只负责覆盖整个计算纹理。
+void main() {
+  gl_Position = vec4(position, 1.0);
+}
+`;
+const simulationFragmentShader = String.raw`precision highp float;
+
+uniform sampler2D uPosition;
+uniform sampler2D uVelocity;
+uniform vec3 uPointer;
+uniform vec2 uPointerVelocity;
+uniform float uTime;
+uniform float uDelta;
+uniform float uForce;
+uniform float uPulse;
+uniform int uMode;
+
+// 多渲染目标一次写出新位置与新速度，避免 CPU 参与粒子更新。
+layout(location = 0) out vec4 outPosition;
+layout(location = 1) out vec4 outVelocity;
+
+// 低成本伪随机函数，用于给每个粒子稳定且独立的扰动。
+float hash(vec3 p) {
+  p = fract(p * 0.1031);
+  p += dot(p, p.yzx + 33.33);
+  return fract((p.x + p.y) * p.z);
+}
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / vec2(textureSize(uPosition, 0));
+  vec4 positionData = texture(uPosition, uv);
+  vec3 p = positionData.xyz;
+  vec3 v = texture(uVelocity, uv).xyz;
+  float seed = hash(vec3(uv, positionData.w));
+
+  vec3 toHand = uPointer - p;
+  float distanceToHand = max(length(toHand), 0.14);
+  vec3 direction = toHand / distanceToHand;
+  float influence = exp(-distanceToHand * 0.48);
+  vec3 acceleration = vec3(0.0);
+
+  // 所有模式都保留轻微流场，让静止画面仍然有呼吸感。
+  vec3 flow = vec3(
+    sin(p.y * 1.7 + uTime * 0.44 + seed * 6.0),
+    cos(p.x * 1.35 - uTime * 0.38 + seed * 4.0),
+    sin((p.x + p.y) * 0.8 + uTime * 0.25)
+  ) * 0.07;
+  acceleration += flow;
+
+  if (uMode == 0) {
+    // 吸引：距离越近越有弹性，避免粒子全部塌缩到一个像素。
+    acceleration += direction * influence * uForce * 3.2;
+    acceleration -= direction * smoothstep(0.5, 0.05, distanceToHand) * 2.4;
+  } else if (uMode == 1) {
+    // 排斥：平方反比冲力形成清晰的空腔边缘。
+    acceleration -= direction * uForce * 1.8 / (0.2 + distanceToHand * distanceToHand);
+  } else if (uMode == 2) {
+    // 旋转：切向力叠加少量轴向吸引，形成稳定涡旋。
+    vec3 tangent = normalize(cross(direction, vec3(0.0, 0.0, 1.0)) + vec3(0.001));
+    acceleration += tangent * influence * uForce * 4.3;
+    acceleration += direction * influence * 0.75;
+    acceleration.z += sin(distanceToHand * 2.0 - uTime) * influence * 0.4;
+  } else if (uMode == 3) {
+    // 拖尾：手部移动速度会把周围粒子卷成方向明确的光带。
+    acceleration += direction * influence * 0.65;
+    acceleration.xy += uPointerVelocity * influence * uForce * 5.0;
+  } else if (uMode == 4) {
+    // 爆炸：切换模式或快速点击时由 uPulse 注入瞬时冲量。
+    acceleration -= direction * influence * uForce * (2.0 + uPulse * 13.0);
+    acceleration += normalize(vec3(seed - 0.5, hash(p.yzx) - 0.5, hash(p.zxy) - 0.5) + 0.001) * uPulse * 2.0;
+  } else if (uMode == 5) {
+    // 能量球：粒子被约束在手掌周围的动态球壳上。
+    float targetRadius = 1.15 + sin(uTime * 2.2 + seed * 6.283) * 0.13;
+    float shellError = distanceToHand - targetRadius;
+    acceleration += direction * shellError * uForce * 3.4;
+    acceleration += normalize(cross(direction, vec3(0.2, 0.8, 0.4)) + vec3(0.001)) * influence * 0.8;
+  } else {
+    // 爱心：按经典参数曲线生成轮廓，再用随机半径填满内部。
+    float angle = positionData.w * 6.2831853;
+    float s = sin(angle);
+    float heartX = 16.0 * s * s * s;
+    float heartY = 13.0 * cos(angle) - 5.0 * cos(2.0 * angle) - 2.0 * cos(3.0 * angle) - cos(4.0 * angle);
+    float fill = sqrt(hash(vec3(uv * 19.0, positionData.w)));
+    vec3 heartTarget = uPointer + vec3(heartX * 0.085, heartY * 0.085, (seed - 0.5) * 0.55) * fill;
+    vec3 toHeart = heartTarget - p;
+    acceleration += toHeart * uForce * 5.2;
+    acceleration.z += sin(uTime * 2.4 + angle * 3.0) * 0.035;
+  }
+
+  // 柔性边界把离场粒子拉回，保持长期运行时的粒子密度。
+  float boundary = length(p / vec3(6.2, 4.5, 3.5));
+  acceleration -= p * smoothstep(0.75, 1.35, boundary) * 0.32;
+
+  float dt = min(uDelta, 0.033);
+  v += acceleration * dt;
+  v *= pow(0.965, dt * 60.0);
+  p += v * dt;
+
+  outPosition = vec4(p, positionData.w);
+  outVelocity = vec4(v, 1.0);
+}
+`;
+const particleVertexShader = String.raw`precision highp float;
+
+uniform sampler2D uPosition;
+uniform sampler2D uVelocity;
+uniform float uPointSize;
+uniform float uTime;
+
+attribute vec2 particleUv;
+varying float vSpeed;
+varying float vDepth;
+varying float vSeed;
+
+void main() {
+  vec4 particle = texture2D(uPosition, particleUv);
+  vec3 velocity = texture2D(uVelocity, particleUv).xyz;
+  vec4 viewPosition = modelViewMatrix * vec4(particle.xyz, 1.0);
+
+  vSpeed = min(length(velocity) * 0.7, 1.0);
+  vDepth = clamp((particle.z + 3.5) / 7.0, 0.0, 1.0);
+  vSeed = particle.w;
+
+  // 透视尺寸衰减让粒子云具有明确的前后层次。
+  gl_PointSize = uPointSize * (2.1 + vSpeed * 2.0) * (9.0 / max(2.0, -viewPosition.z));
+  gl_Position = projectionMatrix * viewPosition;
+}
+`;
+const particleFragmentShader = String.raw`precision highp float;
+
+uniform float uModeHue;
+varying float vSpeed;
+varying float vDepth;
+varying float vSeed;
+
+// 将 HSV 色彩转换成 RGB，便于按运动速度连续调色。
+vec3 hsv2rgb(vec3 c) {
+  vec3 p = abs(fract(c.xxx + vec3(0.0, 0.6667, 0.3333)) * 6.0 - 3.0);
+  return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
+}
+
+void main() {
+  vec2 centered = gl_PointCoord - 0.5;
+  float radius = length(centered);
+  if (radius > 0.5) discard;
+
+  float core = smoothstep(0.5, 0.0, radius);
+  float glow = pow(core, 2.4);
+  float hue = fract(uModeHue + vSpeed * 0.12 + vSeed * 0.035);
+  vec3 color = hsv2rgb(vec3(hue, 0.58 + vSpeed * 0.25, 0.78 + glow * 0.58));
+  color = mix(color * 0.68, color, vDepth);
+
+  gl_FragColor = vec4(color * (0.72 + glow * 1.6), core * (0.28 + glow * 0.72));
+}
+`;
+// 320 x 320 = 102,400。每个纹理像素代表一个粒子的完整状态。
+const TEXTURE_SIZE = 320;
+const PARTICLE_COUNT = TEXTURE_SIZE * TEXTURE_SIZE;
+const MODE_INDEX = { attract: 0, repel: 1, vortex: 2, trail: 3, explode: 4, orb: 5, heart: 6 };
+const MODE_LABEL = { attract: '吸引', repel: '排斥', vortex: '旋转', trail: '拖尾', explode: '爆炸', orb: '能量球', heart: '爱心' };
+const MODE_HUE = { attract: 0.215, repel: 0.49, vortex: 0.79, trail: 0.56, explode: 0.02, orb: 0.12, heart: 0.94 };
+
+const dom = {
+  scene: document.querySelector('#scene'),
+  camera: document.querySelector('#camera'),
+  cameraButton: document.querySelector('#cameraButton'),
+  stateText: document.querySelector('#stateText'),
+  stateDot: document.querySelector('#stateDot'),
+  modeName: document.querySelector('#modeName'),
+  modeGrid: document.querySelector('#modeGrid'),
+  forceSlider: document.querySelector('#forceSlider'),
+  forceValue: document.querySelector('#forceValue'),
+  sizeSlider: document.querySelector('#sizeSlider'),
+  sizeValue: document.querySelector('#sizeValue'),
+  fpsText: document.querySelector('#fpsText'),
+  toast: document.querySelector('#toast'),
+  loading: document.querySelector('#loading'),
+};
+
+let renderer;
+let scene;
+let camera;
+let composer;
+let afterimagePass;
+let simulationScene;
+let simulationCamera;
+let simulationMaterial;
+let particleMaterial;
+let targets;
+let currentTarget = 0;
+let handLandmarker = null;
+let mediaStream = null;
+let cameraRunning = false;
+let lastVideoTime = -1;
+let toastTimer;
+let currentMode = 'attract';
+let stableGesture = { candidate: '', frames: 0 };
+let pulse = 0;
+
+const clock = new THREE.Clock();
+const pointer = new THREE.Vector3(0, 0, 0);
+const targetPointer = new THREE.Vector3(0, 0, 0);
+const previousPointer = new THREE.Vector3(0, 0, 0);
+const pointerVelocity = new THREE.Vector2();
+const screenPointer = new THREE.Vector2(0, 0);
+let fpsFrames = 0;
+let fpsTime = 0;
+
+/** 在页面底部显示不会阻断交互的短消息。 */
+function showToast(message, duration = 2800) {
+  window.clearTimeout(toastTimer);
+  dom.toast.textContent = message;
+  dom.toast.classList.add('visible');
+  toastTimer = window.setTimeout(() => dom.toast.classList.remove('visible'), duration);
+}
+
+/** 更新滑块已填充部分，避免原生控件在不同浏览器中视觉不一致。 */
+function paintRange(input) {
+  const min = Number(input.min);
+  const max = Number(input.max);
+  const value = ((Number(input.value) - min) / (max - min)) * 100;
+  input.style.background = `linear-gradient(90deg, var(--acid) ${value}%, #363c3a ${value}%)`;
+}
+
+/** 创建初始位置和速度纹理。粒子以扁球状星云分布，中心密度更高。 */
+function createInitialTextures() {
+  const positions = new Float32Array(PARTICLE_COUNT * 4);
+  const velocities = new Float32Array(PARTICLE_COUNT * 4);
+
+  for (let i = 0; i < PARTICLE_COUNT; i += 1) {
+    const offset = i * 4;
+    const radius = Math.pow(Math.random(), 0.55) * 4.4 + 0.15;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    const arm = Math.sin(theta * 2.0) * 0.35;
+    positions[offset] = Math.sin(phi) * Math.cos(theta + arm) * radius;
+    positions[offset + 1] = Math.sin(phi) * Math.sin(theta + arm) * radius * 0.68;
+    positions[offset + 2] = Math.cos(phi) * radius * 0.46;
+    positions[offset + 3] = Math.random();
+    velocities[offset] = (Math.random() - 0.5) * 0.04;
+    velocities[offset + 1] = (Math.random() - 0.5) * 0.04;
+    velocities[offset + 2] = (Math.random() - 0.5) * 0.04;
+    velocities[offset + 3] = 1;
+  }
+
+  const positionTexture = new THREE.DataTexture(positions, TEXTURE_SIZE, TEXTURE_SIZE, THREE.RGBAFormat, THREE.FloatType);
+  const velocityTexture = new THREE.DataTexture(velocities, TEXTURE_SIZE, TEXTURE_SIZE, THREE.RGBAFormat, THREE.FloatType);
+  positionTexture.needsUpdate = true;
+  velocityTexture.needsUpdate = true;
+  return { positionTexture, velocityTexture };
+}
+
+/** 创建含两个颜色附件的浮点渲染目标，用于位置/速度乒乓计算。 */
+function createComputeTarget() {
+  const target = new THREE.WebGLRenderTarget(TEXTURE_SIZE, TEXTURE_SIZE, {
+    count: 2,
+    type: THREE.FloatType,
+    format: THREE.RGBAFormat,
+    minFilter: THREE.NearestFilter,
+    magFilter: THREE.NearestFilter,
+    depthBuffer: false,
+    stencilBuffer: false,
+  });
+  target.textures[0].name = 'ParticlePositions';
+  target.textures[1].name = 'ParticleVelocities';
+  return target;
+}
+
+/** 将 CPU 生成的初值写进两个 GPU 渲染目标，之后状态只在显卡内部流转。 */
+function seedComputeTargets(positionTexture, velocityTexture) {
+  const seedMaterial = new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    uniforms: { uPosition: { value: positionTexture }, uVelocity: { value: velocityTexture } },
+    vertexShader: `void main(){ gl_Position = vec4(position, 1.0); }`,
+    fragmentShader: `
+      precision highp float;
+      uniform sampler2D uPosition;
+      uniform sampler2D uVelocity;
+      layout(location=0) out vec4 outPosition;
+      layout(location=1) out vec4 outVelocity;
+      void main(){
+        vec2 uv = gl_FragCoord.xy / vec2(textureSize(uPosition, 0));
+        outPosition = texture(uPosition, uv);
+        outVelocity = texture(uVelocity, uv);
+      }
+    `,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), seedMaterial);
+  const seedScene = new THREE.Scene();
+  seedScene.add(mesh);
+
+  targets.forEach((target) => {
+    renderer.setRenderTarget(target);
+    renderer.render(seedScene, simulationCamera);
+  });
+  renderer.setRenderTarget(null);
+  mesh.geometry.dispose();
+  seedMaterial.dispose();
+  positionTexture.dispose();
+  velocityTexture.dispose();
+}
+
+/** 建立计算场景和可见粒子场景。 */
+function initGraphics() {
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('webgl2', { alpha: false, antialias: false, powerPreference: 'high-performance' });
+  if (!context) throw new Error('当前浏览器不支持 WebGL2');
+
+  renderer = new THREE.WebGLRenderer({ canvas, context, antialias: false, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.08;
+  dom.scene.appendChild(renderer.domElement);
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x07090d);
+  camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 30);
+  camera.position.set(0, 0, 9.2);
+
+  simulationCamera = new THREE.Camera();
+  simulationScene = new THREE.Scene();
+  targets = [createComputeTarget(), createComputeTarget()];
+  const initial = createInitialTextures();
+  seedComputeTargets(initial.positionTexture, initial.velocityTexture);
+
+  simulationMaterial = new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    uniforms: {
+      uPosition: { value: targets[0].textures[0] },
+      uVelocity: { value: targets[0].textures[1] },
+      uPointer: { value: pointer },
+      uPointerVelocity: { value: pointerVelocity },
+      uTime: { value: 0 },
+      uDelta: { value: 0.016 },
+      uForce: { value: Number(dom.forceSlider.value) },
+      uPulse: { value: 0 },
+      uMode: { value: MODE_INDEX[currentMode] },
+    },
+    vertexShader: simulationVertexShader,
+    fragmentShader: simulationFragmentShader,
+    depthTest: false,
+    depthWrite: false,
+  });
+  simulationScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), simulationMaterial));
+
+  const positions = new Float32Array(PARTICLE_COUNT * 3);
+  const uvs = new Float32Array(PARTICLE_COUNT * 2);
+  for (let y = 0; y < TEXTURE_SIZE; y += 1) {
+    for (let x = 0; x < TEXTURE_SIZE; x += 1) {
+      const index = y * TEXTURE_SIZE + x;
+      uvs[index * 2] = (x + 0.5) / TEXTURE_SIZE;
+      uvs[index * 2 + 1] = (y + 0.5) / TEXTURE_SIZE;
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('particleUv', new THREE.BufferAttribute(uvs, 2));
+
+  particleMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      uPosition: { value: targets[0].textures[0] },
+      uVelocity: { value: targets[0].textures[1] },
+      uPointSize: { value: Number(dom.sizeSlider.value) * renderer.getPixelRatio() },
+      uTime: { value: 0 },
+      uModeHue: { value: MODE_HUE[currentMode] },
+    },
+    vertexShader: particleVertexShader,
+    fragmentShader: particleFragmentShader,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const points = new THREE.Points(geometry, particleMaterial);
+  points.frustumCulled = false;
+  scene.add(points);
+
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  afterimagePass = new AfterimagePass(0.88);
+  composer.addPass(afterimagePass);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.72, 0.52, 0.16);
+  composer.addPass(bloom);
+}
+
+/** 将屏幕归一化坐标投射到粒子所在的 z=0 世界平面。 */
+function screenToWorld(normalizedX, normalizedY, output = targetPointer) {
+  const world = new THREE.Vector3(normalizedX * 2 - 1, -(normalizedY * 2 - 1), 0.2).unproject(camera);
+  const direction = world.sub(camera.position).normalize();
+  const distance = -camera.position.z / direction.z;
+  output.copy(camera.position).add(direction.multiplyScalar(distance));
+}
+
+/** 切换效果并同步按钮、色彩、拖尾阻尼与爆炸脉冲。 */
+function setMode(mode, source = 'manual') {
+  if (!(mode in MODE_INDEX)) return;
+  const changed = currentMode !== mode;
+  currentMode = mode;
+  dom.modeName.textContent = MODE_LABEL[mode];
+  dom.modeGrid.querySelectorAll('.mode-button').forEach((button) => {
+    const active = button.dataset.mode === mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-checked', String(active));
+  });
+  if (simulationMaterial) simulationMaterial.uniforms.uMode.value = MODE_INDEX[mode];
+  if (particleMaterial) particleMaterial.uniforms.uModeHue.value = MODE_HUE[mode];
+  if (afterimagePass) afterimagePass.uniforms.damp.value = mode === 'trail' ? 0.94 : 0.86;
+  if (changed && mode === 'explode') pulse = 1;
+  if (source === 'gesture' && changed) dom.stateText.textContent = `手势识别 · ${MODE_LABEL[mode]}`;
+}
+
+/** 用关键点间相对距离分类，不依赖手离镜头的绝对尺寸。 */
+function classifyGesture(landmarks) {
+  const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
+  const palmSize = Math.max(distance(landmarks[0], landmarks[9]), 0.04);
+  const fingers = [
+    distance(landmarks[8], landmarks[0]) > distance(landmarks[6], landmarks[0]) * 1.08,
+    distance(landmarks[12], landmarks[0]) > distance(landmarks[10], landmarks[0]) * 1.08,
+    distance(landmarks[16], landmarks[0]) > distance(landmarks[14], landmarks[0]) * 1.08,
+    distance(landmarks[20], landmarks[0]) > distance(landmarks[18], landmarks[0]) * 1.08,
+  ];
+  const pinchDistance = distance(landmarks[4], landmarks[8]) / palmSize;
+  const middlePinchDistance = distance(landmarks[4], landmarks[12]) / palmSize;
+  const ringPinchDistance = distance(landmarks[4], landmarks[16]) / palmSize;
+  // 特殊捏合优先判断，避免多个指尖靠近时被归类为普通食指捏合。
+  if (ringPinchDistance < 0.42) return 'explode';
+  if (middlePinchDistance < 0.42) return 'trail';
+  // 比心与普通捏合的区别：比心时中指、无名指和小指都收拢。
+  if (pinchDistance < 0.38) {
+    const foldedOuterFingers = !fingers[1] && !fingers[2] && !fingers[3];
+    return foldedOuterFingers ? 'heart' : 'attract';
+  }
+  const extended = fingers.filter(Boolean).length;
+  if (extended >= 4) return 'repel';
+  if (extended === 2 && fingers[0] && fingers[1]) return 'vortex';
+  if (extended === 0) return 'orb';
+  return 'trail';
+}
+
+/** 连续识别数帧后才切换，消除关键点在手势边界上的抖动。 */
+function stabilizeGesture(mode) {
+  if (stableGesture.candidate === mode) stableGesture.frames += 1;
+  else stableGesture = { candidate: mode, frames: 1 };
+  // 四个连续视频帧即可确认手势，30 FPS 摄像头下约 0.13 秒完成切换。
+  if (stableGesture.frames === 4) setMode(mode, 'gesture');
+}
+
+/** 读取最新视频帧。识别失败只影响摄像头输入，粒子渲染不会中断。 */
+function updateHandTracking() {
+  if (!cameraRunning || !handLandmarker || dom.camera.readyState < 2) return;
+  if (dom.camera.currentTime === lastVideoTime) return;
+  lastVideoTime = dom.camera.currentTime;
+  try {
+    const result = handLandmarker.detectForVideo(dom.camera, performance.now());
+    if (result.landmarks?.length) {
+      const landmarks = result.landmarks[0];
+      const palm = landmarks[9];
+      // 视频画面默认镜像理解，因此横坐标取反，操作方向与镜中自己一致。
+      screenToWorld(1 - palm.x, palm.y);
+      stabilizeGesture(classifyGesture(landmarks));
+      dom.stateDot.classList.add('camera');
+    } else {
+      dom.stateText.textContent = '等待手部进入画面';
+    }
+  } catch (error) {
+    console.warn('手势帧识别失败：', error);
+  }
+}
+
+/** 加载 MediaPipe WASM 与手部模型，GPU 委托失败时自动退回 CPU。 */
+async function createHandTracker() {
+  const wasmRoot = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm';
+  const modelUrl = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+  const vision = await FilesetResolver.forVisionTasks(wasmRoot);
+  const options = {
+    baseOptions: { modelAssetPath: modelUrl, delegate: 'GPU' },
+    runningMode: 'VIDEO',
+    numHands: 1,
+    minHandDetectionConfidence: 0.55,
+    minHandPresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+  };
+  try {
+    return await HandLandmarker.createFromOptions(vision, options);
+  } catch (gpuError) {
+    console.warn('MediaPipe GPU 委托不可用，自动使用 CPU：', gpuError);
+    options.baseOptions.delegate = 'CPU';
+    return HandLandmarker.createFromOptions(vision, options);
+  }
+}
+
+/** 开关摄像头；关闭后立即恢复鼠标模拟，不保留设备占用。 */
+async function toggleCamera() {
+  if (cameraRunning) {
+    mediaStream?.getTracks().forEach((track) => track.stop());
+    mediaStream = null;
+    cameraRunning = false;
+    dom.camera.srcObject = null;
+    dom.cameraButton.querySelector('span').textContent = '开启摄像头';
+    dom.stateText.textContent = '鼠标模拟中';
+    dom.stateDot.classList.remove('camera');
+    return;
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showToast('当前环境无法访问摄像头，请使用 localhost 或 HTTPS。', 4200);
+    return;
+  }
+  dom.cameraButton.disabled = true;
+  dom.cameraButton.querySelector('span').textContent = '正在连接';
+  dom.stateText.textContent = '加载手势模型';
+  try {
+    const [tracker, stream] = await Promise.all([
+      handLandmarker ? Promise.resolve(handLandmarker) : createHandTracker(),
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 720 } }, audio: false }),
+    ]);
+    handLandmarker = tracker;
+    mediaStream = stream;
+    dom.camera.srcObject = stream;
+    await dom.camera.play();
+    cameraRunning = true;
+    lastVideoTime = -1;
+    dom.cameraButton.querySelector('span').textContent = '关闭摄像头';
+    dom.stateText.textContent = '等待手部进入画面';
+    showToast('摄像头已接管交互：捏合、张手、握拳或伸出双指。');
+  } catch (error) {
+    console.error('摄像头或模型初始化失败：', error);
+    mediaStream?.getTracks().forEach((track) => track.stop());
+    mediaStream = null;
+    const denied = error?.name === 'NotAllowedError';
+    showToast(denied ? '摄像头权限被拒绝，已继续使用鼠标模拟。' : '摄像头连接失败，已继续使用鼠标模拟。', 4200);
+    dom.cameraButton.querySelector('span').textContent = '开启摄像头';
+    dom.stateText.textContent = '鼠标模拟中';
+  } finally {
+    dom.cameraButton.disabled = false;
+  }
+}
+
+/** 每帧先计算粒子状态，再从最新纹理渲染，实现完全 GPU 驱动。 */
+function animate() {
+  requestAnimationFrame(animate);
+  const delta = Math.min(clock.getDelta(), 0.05);
+  const elapsed = clock.elapsedTime;
+  updateHandTracking();
+
+  pointer.lerp(targetPointer, 1 - Math.pow(0.001, delta));
+  pointerVelocity.set(pointer.x - previousPointer.x, pointer.y - previousPointer.y).multiplyScalar(1 / Math.max(delta, 0.001));
+  pointerVelocity.multiplyScalar(0.08);
+  previousPointer.copy(pointer);
+  pulse *= Math.pow(0.06, delta);
+
+  const nextTarget = 1 - currentTarget;
+  simulationMaterial.uniforms.uPosition.value = targets[currentTarget].textures[0];
+  simulationMaterial.uniforms.uVelocity.value = targets[currentTarget].textures[1];
+  simulationMaterial.uniforms.uTime.value = elapsed;
+  simulationMaterial.uniforms.uDelta.value = delta;
+  simulationMaterial.uniforms.uPulse.value = pulse;
+  renderer.setRenderTarget(targets[nextTarget]);
+  renderer.render(simulationScene, simulationCamera);
+  renderer.setRenderTarget(null);
+  currentTarget = nextTarget;
+
+  particleMaterial.uniforms.uPosition.value = targets[currentTarget].textures[0];
+  particleMaterial.uniforms.uVelocity.value = targets[currentTarget].textures[1];
+  particleMaterial.uniforms.uTime.value = elapsed;
+  composer.render(delta);
+
+  fpsFrames += 1;
+  fpsTime += delta;
+  if (fpsTime >= 0.6) {
+    dom.fpsText.textContent = `${Math.round(fpsFrames / fpsTime)} FPS`;
+    fpsFrames = 0;
+    fpsTime = 0;
+  }
+}
+
+/** 绑定所有界面输入，鼠标按下会临时增强并触发爆炸模式。 */
+function bindEvents() {
+  dom.scene.addEventListener('pointermove', (event) => {
+    if (cameraRunning) return;
+    screenPointer.set(event.clientX / window.innerWidth, event.clientY / window.innerHeight);
+    screenToWorld(screenPointer.x, screenPointer.y);
+  });
+  dom.scene.addEventListener('pointerdown', () => {
+    if (!cameraRunning) pulse = 1;
+  });
+  dom.modeGrid.addEventListener('click', (event) => {
+    const button = event.target.closest('.mode-button');
+    if (button) setMode(button.dataset.mode);
+  });
+  dom.cameraButton.addEventListener('click', toggleCamera);
+  dom.forceSlider.addEventListener('input', () => {
+    dom.forceValue.value = Number(dom.forceSlider.value).toFixed(2);
+    simulationMaterial.uniforms.uForce.value = Number(dom.forceSlider.value);
+    paintRange(dom.forceSlider);
+  });
+  dom.sizeSlider.addEventListener('input', () => {
+    dom.sizeValue.value = Number(dom.sizeSlider.value).toFixed(2);
+    particleMaterial.uniforms.uPointSize.value = Number(dom.sizeSlider.value) * renderer.getPixelRatio();
+    paintRange(dom.sizeSlider);
+  });
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
+    particleMaterial.uniforms.uPointSize.value = Number(dom.sizeSlider.value) * renderer.getPixelRatio();
+  });
+  window.addEventListener('beforeunload', () => mediaStream?.getTracks().forEach((track) => track.stop()));
+}
+
+/** 应用入口。即使初始化失败，也会给用户保留可读的错误界面。 */
+function boot() {
+  try {
+    paintRange(dom.forceSlider);
+    paintRange(dom.sizeSlider);
+    initGraphics();
+    bindEvents();
+    screenToWorld(0.5, 0.5, pointer);
+    targetPointer.copy(pointer);
+    previousPointer.copy(pointer);
+    animate();
+    window.setTimeout(() => dom.loading.classList.add('hidden'), 400);
+  } catch (error) {
+    console.error('粒子场初始化失败：', error);
+    dom.loading.querySelector('strong').textContent = '无法启动粒子场';
+    dom.loading.querySelector('span').textContent = error.message || '请确认浏览器已开启 WebGL2';
+    dom.loading.querySelector('.loader-ring').style.display = 'none';
+  }
+}
+
+boot();
+
+    </script>
+  </body>
+</html>
